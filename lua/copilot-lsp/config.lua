@@ -1,9 +1,8 @@
 ---@class copilotlsp.config.nes
----@field move_count_threshold integer Number of cursor movements before clearing suggestion
----@field distance_threshold integer Maximum line distance before clearing suggestion
----@field clear_on_large_distance boolean Whether to clear suggestion when cursor is far away
----@field count_horizontal_moves boolean Whether to count horizontal cursor movements
----@field reset_on_approaching boolean Whether to reset counter when approaching suggestion
+---@field debounce integer Debounce delay in ms before requesting NES
+---@field trigger { events: string[] }
+---@field clear { events: string[], esc: boolean }
+---@field diff { inline: "words"|"chars"|false }
 
 local M = {}
 
@@ -11,11 +10,17 @@ local M = {}
 ---@field nes copilotlsp.config.nes
 M.defaults = {
     nes = {
-        move_count_threshold = 3,
-        distance_threshold = 40,
-        clear_on_large_distance = true,
-        count_horizontal_moves = true,
-        reset_on_approaching = true,
+        debounce = 100,
+        trigger = {
+            events = { "ModeChanged i:n", "TextChanged", "User CopilotLspNesDone" },
+        },
+        clear = {
+            events = { "TextChangedI", "InsertEnter" },
+            esc = true,
+        },
+        diff = {
+            inline = "words", -- "words" | "chars" | false
+        },
     },
 }
 

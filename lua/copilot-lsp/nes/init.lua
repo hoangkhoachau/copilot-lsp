@@ -6,10 +6,36 @@ local M = {}
 
 local nes_ns = vim.api.nvim_create_namespace("copilotlsp.nes")
 
+-- Per-client request tracking for cancellation
+M._requests = {} -- client_id -> request_id
+M._latest_seq = {} -- client_id -> integer
+
+--- Cancel any in-flight NES request for all tracked clients
+function M.cancel()
+    for client_id, req_id in pairs(M._requests) do
+        local client = vim.lsp.get_client_by_id(client_id)
+        if client then
+            client:cancel_request(req_id)
+        end
+    end
+    M._requests = {}
+end
+
 ---@param err lsp.ResponseError?
 ---@param result copilotlsp.copilotInlineEditResponse
 ---@param ctx lsp.HandlerContext
-local function handle_nes_response(err, result, ctx)
+---@param seq integer sequence number at time of request
+local function handle_nes_response(err, result, ctx, seq)
+    -- Remove from in-flight tracking
+    if M._requests[ctx.client_id] == ctx.request_id then
+        M._requests[ctx.client_id] = nil
+    end
+
+    -- Stale response: a newer request was already made
+    if M._latest_seq[ctx.client_id] ~= seq then
+        return
+    end
+
     if err then
         vim.notify("[copilot-lsp] " .. err.message)
         return
@@ -42,11 +68,29 @@ function M.request_nes(copilot_lss)
     end
     assert(copilot_lss, errs.ErrNotStarted)
     if copilot_lss.attached_buffers[bufnr] then
+        -- Cancel any previous in-flight request
+        M.cancel()
+
+        -- Increment sequence counter for this client
+        local client_id = copilot_lss.id
+        local seq = (M._latest_seq[client_id] or 0) + 1
+        M._latest_seq[client_id] = seq
+
         local version = vim.lsp.util.buf_versions[bufnr]
         local pos_params = vim.lsp.util.make_position_params(0, "utf-16")
         ---@diagnostic disable-next-line: inject-field
         pos_params.textDocument.version = version
-        copilot_lss:request("textDocument/copilotInlineEdit", pos_params, handle_nes_response)
+
+        local ok, req_id = copilot_lss:request(
+            "textDocument/copilotInlineEdit",
+            pos_params,
+            function(err, result, ctx)
+                handle_nes_response(err, result, ctx, seq)
+            end
+        )
+        if ok and req_id then
+            M._requests[client_id] = req_id
+        end
     end
 end
 
@@ -162,6 +206,8 @@ function M.apply_pending_nes(bufnr)
         utils.apply_inline_edit(state)
         vim.b[bufnr].nes_jump = false
         nes_ui.clear_suggestion(bufnr, nes_ns)
+        -- Re-trigger suggestions after applying
+        vim.api.nvim_exec_autocmds("User", { pattern = "CopilotLspNesDone" })
     end)
     return true
 end
@@ -187,25 +233,71 @@ end
 ---@param client vim.lsp.Client
 ---@param au integer
 function M.lsp_on_init(client, au)
-    --NOTE: NES Completions
+    local cfg = require("copilot-lsp.config").config
     local debounced_request =
-        require("copilot-lsp.util").debounce(require("copilot-lsp.nes").request_nes, vim.g.copilot_nes_debounce or 500)
-    vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, {
-        callback = function()
-            debounced_request(client)
-        end,
-        group = au,
-    })
-
-    --NOTE: didFocus
-    vim.api.nvim_create_autocmd("BufEnter", {
-        callback = function()
+        utils.debounce(M.request_nes, cfg.nes.debounce)
+    local debounced_focus =
+        utils.debounce(function()
             local td_params = vim.lsp.util.make_text_document_params()
             client:notify("textDocument/didFocus", {
                 textDocument = {
                     uri = td_params.uri,
                 },
             })
+        end, 10)
+
+    -- Trigger: fire NES request after leaving insert / text changed in normal / after apply
+    -- Parse "ModeChanged i:n" style events: split on space
+    local trigger_evts = {}
+    local trigger_patterns = {}
+    for _, ev in ipairs(cfg.nes.trigger.events) do
+        local evt, pat = ev:match("^(%S+)%s*(.*)")
+        table.insert(trigger_evts, evt)
+        table.insert(trigger_patterns, pat ~= "" and pat or nil)
+    end
+    -- Register each trigger event separately (to support User events with patterns)
+    for i, evt in ipairs(trigger_evts) do
+        local pattern = trigger_patterns[i]
+        local autocmd_opts = {
+            callback = function()
+                debounced_request(client)
+            end,
+            group = au,
+        }
+        if evt == "User" then
+            autocmd_opts.pattern = pattern
+        else
+            -- For ModeChanged i:n, pattern is "i:n"
+            if pattern then
+                autocmd_opts.pattern = pattern
+            end
+        end
+        vim.api.nvim_create_autocmd(evt, autocmd_opts)
+    end
+
+    -- Clear: clear suggestion on InsertEnter and TextChangedI
+    vim.api.nvim_create_autocmd(cfg.nes.clear.events, {
+        callback = function()
+            M.clear()
+        end,
+        group = au,
+    })
+
+    -- Clear on Escape key
+    if cfg.nes.clear.esc then
+        vim.on_key(function(key)
+            if key == "\27" then -- ESC byte
+                vim.schedule(function()
+                    M.clear()
+                end)
+            end
+        end, nes_ns)
+    end
+
+    -- didFocus on buffer/window enter
+    vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
+        callback = function()
+            debounced_focus()
         end,
         group = au,
     })

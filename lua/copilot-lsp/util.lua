@@ -173,9 +173,13 @@ function M.hl_text_to_virt_lines(text, lang)
             local chunk_text = string.sub(lines[curr_row + 1], curr_col + 1, cap.start_col)
             table.insert(curr_virt_line, hl_chunk(chunk_text))
             curr_col = cap.start_col
+        elseif cap.start_col < curr_col then
+            -- overlapping capture: clamp to current position
+            cap.start_col = curr_col
+            if cap.end_col <= curr_col then
+                return -- fully consumed by a previous capture, skip
+            end
         end
-
-        assert(curr_col == cap.start_col, "Unexpected start column")
 
         if cap.end_row > curr_row then
             local chunk_text = string.sub(lines[curr_row + 1], curr_col + 1)
@@ -212,6 +216,67 @@ function M.set_hl()
     vim.api.nvim_set_hl(0, "CopilotLspNesAdd", { link = "DiffAdd", default = true })
     vim.api.nvim_set_hl(0, "CopilotLspNesDelete", { link = "DiffDelete", default = true })
     vim.api.nvim_set_hl(0, "CopilotLspNesApply", { link = "DiffText", default = true })
+    vim.api.nvim_set_hl(0, "CopilotLspNesContext", { link = "DiffChange", default = true })
+end
+
+--- UTF-8 aware word splitting. Splits on whitespace and punctuation boundaries.
+---@param str string
+---@return string[]
+function M.split_words(str)
+    local words = {}
+    local i = 1
+    local len = #str
+    while i <= len do
+        local b = str:byte(i)
+        -- determine character class
+        local char = str:sub(i, i)
+        -- find byte length of current UTF-8 codepoint
+        local char_len = 1
+        if b >= 0xF0 then
+            char_len = 4
+        elseif b >= 0xE0 then
+            char_len = 3
+        elseif b >= 0xC0 then
+            char_len = 2
+        end
+        char = str:sub(i, i + char_len - 1)
+        local cls = vim.fn.charclass(char)
+        -- collect consecutive chars of same class
+        local j = i + char_len
+        while j <= len do
+            local b2 = str:byte(j)
+            local cl2 = 1
+            if b2 >= 0xF0 then
+                cl2 = 4
+            elseif b2 >= 0xE0 then
+                cl2 = 3
+            elseif b2 >= 0xC0 then
+                cl2 = 2
+            end
+            local c2 = str:sub(j, j + cl2 - 1)
+            if vim.fn.charclass(c2) ~= cls then
+                break
+            end
+            j = j + cl2
+        end
+        table.insert(words, str:sub(i, j - 1))
+        i = j
+    end
+    return words
+end
+
+--- UTF-8 aware character splitting.
+---@param str string
+---@return string[]
+function M.split_chars(str)
+    local chars = {}
+    local positions = vim.str_utf_pos(str)
+    for k = 1, #positions do
+        local start = positions[k]
+        local finish = positions[k + 1] and positions[k + 1] - 1 or #str
+        table.insert(chars, str:sub(start, finish))
+    end
+    return chars
 end
 
 --- check if buffer uri is a named buffer
