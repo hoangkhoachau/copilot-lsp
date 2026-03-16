@@ -3,6 +3,7 @@
 ---@field trigger { events: string[] }
 ---@field clear { events: string[], esc: boolean }
 ---@field diff { inline: "words"|"chars"|false }
+---@field indicator { enabled: boolean, text: string, hl: string }
 
 local M = {}
 
@@ -20,6 +21,11 @@ M.defaults = {
         },
         diff = {
             inline = "words", -- "words" | "chars" | false
+        },
+        indicator = {
+            enabled = true,
+            text = "[NES]",
+            hl = "Comment",
         },
     },
 }

@@ -9,6 +9,18 @@ local nes_ns = vim.api.nvim_create_namespace("copilotlsp.nes")
 -- Per-client request tracking for cancellation
 M._requests = {} -- client_id -> request_id
 M._latest_seq = {} -- client_id -> integer
+M._suppressed = false
+M._last_changedtick = {} -- bufnr -> changedtick at last request
+
+function M.suppress()
+    M._suppressed = true
+    M.cancel()
+    M.clear()
+end
+
+function M.unsuppress()
+    M._suppressed = false
+end
 
 --- Cancel any in-flight NES request for all tracked clients
 function M.cancel()
@@ -44,6 +56,9 @@ local function handle_nes_response(err, result, ctx, seq)
     if not vim.api.nvim_buf_is_valid(ctx.bufnr) then
         return
     end
+    if not result or not result.edits or #result.edits == 0 then
+        return
+    end
     for _, edit in ipairs(result.edits) do
         --- Convert to textEdit fields
         edit.newText = edit.text
@@ -62,7 +77,13 @@ end
 --- Requests the NextEditSuggestion from the current cursor position
 ---@param copilot_lss? vim.lsp.Client|string
 function M.request_nes(copilot_lss)
+    if M._suppressed then return end
+    if vim.api.nvim_get_mode().mode ~= "n" then return end
     local bufnr = vim.api.nvim_get_current_buf()
+    local tick = vim.b[bufnr].changedtick
+    if M._last_changedtick[bufnr] == tick then return end
+    M._last_changedtick[bufnr] = tick
+    vim.notify("[nes] requesting tick=" .. tostring(tick), vim.log.levels.DEBUG)
     if type(copilot_lss) == "string" then
         copilot_lss = vim.lsp.get_clients({ name = copilot_lss })[1]
     end
@@ -76,7 +97,8 @@ function M.request_nes(copilot_lss)
         local seq = (M._latest_seq[client_id] or 0) + 1
         M._latest_seq[client_id] = seq
 
-        local version = vim.lsp.util.buf_versions[bufnr]
+        local version = vim.lsp.util.buf_versions and vim.lsp.util.buf_versions[bufnr]
+            or vim.b[bufnr].changedtick
         local pos_params = vim.lsp.util.make_position_params(0, "utf-16")
         ---@diagnostic disable-next-line: inject-field
         pos_params.textDocument.version = version
@@ -108,7 +130,7 @@ function M.walk_cursor_start_edit(bufnr)
     end
 
     local total_lines = vim.api.nvim_buf_line_count(bufnr)
-    local cursor_row, _ = unpack(vim.api.nvim_win_get_cursor(0))
+    local cursor_row, cursor_col = unpack(vim.api.nvim_win_get_cursor(0))
     if state.range.start.line >= total_lines then
         -- If the start line is beyond the end of the buffer then we can't walk there
         -- if we are at the end of the buffer, we've walked as we can
@@ -125,10 +147,11 @@ function M.walk_cursor_start_edit(bufnr)
         }, "utf-16", { focus = true })
         return true
     end
-    if cursor_row - 1 ~= state.range.start.line then
+    if cursor_row - 1 ~= state.range.start.line or cursor_col ~= state.range.start.character then
         vim.b[bufnr].nes_jump = true
         -- Since we are async, we check to see if the buffer has changed
         if vim.api.nvim_get_current_buf() ~= vim.uri_to_bufnr(state.textDocument.uri) then
+            vim.b[bufnr].nes_jump = false
             return false
         end
 
@@ -230,6 +253,14 @@ function M.clear()
     return false
 end
 
+--- Clear the current suggestion and immediately request a new one (no debounce).
+--- Useful for cycling suggestions, e.g. bind to `]n`.
+---@param copilot_lss vim.lsp.Client|string
+function M.reject_and_next(copilot_lss)
+    M.clear()
+    M.request_nes(copilot_lss)
+end
+
 ---@param client vim.lsp.Client
 ---@param au integer
 function M.lsp_on_init(client, au)
@@ -260,7 +291,9 @@ function M.lsp_on_init(client, au)
         local pattern = trigger_patterns[i]
         local autocmd_opts = {
             callback = function()
-                debounced_request(client)
+                if not M._suppressed then
+                    debounced_request(client)
+                end
             end,
             group = au,
         }
@@ -275,6 +308,14 @@ function M.lsp_on_init(client, au)
         vim.api.nvim_create_autocmd(evt, autocmd_opts)
     end
 
+    -- Cleanup changedtick tracking when buffers are closed
+    vim.api.nvim_create_autocmd("BufDelete", {
+        callback = function(ev)
+            M._last_changedtick[ev.buf] = nil
+        end,
+        group = au,
+    })
+
     -- Clear: clear suggestion on InsertEnter and TextChangedI
     vim.api.nvim_create_autocmd(cfg.nes.clear.events, {
         callback = function()
@@ -285,8 +326,8 @@ function M.lsp_on_init(client, au)
 
     -- Clear on Escape key
     if cfg.nes.clear.esc then
-        vim.on_key(function(key)
-            if key == "\27" then -- ESC byte
+        vim.on_key(function(key, typed)
+            if typed == "\27" then -- ESC byte (typed is empty for multi-byte sequences like arrows)
                 vim.schedule(function()
                     M.clear()
                 end)

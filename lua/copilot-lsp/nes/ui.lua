@@ -1,5 +1,4 @@
 local M = {}
-local config = require("copilot-lsp.config").config
 
 ---@param bufnr integer
 ---@param ns_id integer
@@ -31,150 +30,6 @@ end
 
 ---@private
 ---@param bufnr integer
----@param edit lsp.TextEdit
----@return copilotlsp.nes.InlineEditPreview
-function M._calculate_preview(bufnr, edit)
-    local text = edit.newText
-    local range = edit.range
-    local start_line = range.start.line
-    local start_char = range.start.character
-    local end_line = range["end"].line
-    local end_char = range["end"].character
-
-    -- Split text by newline. Use plain=true to handle trailing newline correctly.
-    local new_lines = vim.split(text, "\n", { plain = true })
-    local num_new_lines = #new_lines
-
-    local old_lines = vim.api.nvim_buf_get_lines(bufnr, start_line, end_line + 1, false)
-    local num_old_lines = #old_lines
-
-    local is_same_line = start_line == end_line
-    local is_deletion = text == ""
-    local lines_edit = is_same_line or (start_char == 0 and end_char == 0)
-    local is_insertion = is_same_line and start_char == end_char
-
-    if is_deletion and is_insertion then
-        -- no-op
-        return {}
-    end
-
-    if is_deletion and lines_edit then
-        return {
-            deletion = {
-                range = edit.range,
-            },
-        }
-    end
-
-    if is_insertion and num_new_lines == 1 and text ~= "" then
-        -- inline insertion
-        return {
-            inline_insertion = {
-                text = text,
-                line = start_line,
-                character = start_char,
-            },
-        }
-    end
-
-    if is_insertion and num_new_lines > 1 then
-        if num_old_lines == 0 then
-            return {
-                lines_insertion = {
-                    text = text,
-                    line = start_line,
-                },
-            }
-        end
-
-        if start_char == #old_lines[1] and new_lines[1] == "" then
-            -- insert lines after the start line
-            return {
-                lines_insertion = {
-                    text = table.concat(vim.list_slice(new_lines, 2), "\n"),
-                    line = start_line,
-                },
-            }
-        end
-
-        if end_char == 0 and new_lines[num_new_lines] == "" then
-            -- insert lines before the end line
-            return {
-                lines_insertion = {
-                    text = table.concat(vim.list_slice(new_lines, 1, num_new_lines - 1), "\n"),
-                    line = start_line,
-                    above = true,
-                },
-            }
-        end
-    end
-
-    -- insert lines in the middle
-    local prefix = old_lines[1]:sub(1, start_char)
-    local suffix = old_lines[num_old_lines]:sub(end_char + 1)
-    local new_lines_extend = vim.deepcopy(new_lines)
-    new_lines_extend[1] = prefix .. new_lines_extend[1]
-    new_lines_extend[num_new_lines] = new_lines_extend[num_new_lines] .. suffix
-    local insertion = table.concat(new_lines_extend, "\n")
-
-    return {
-        deletion = {
-            range = {
-                start = { line = start_line, character = 0 },
-                ["end"] = { line = end_line, character = #old_lines[num_old_lines] },
-            },
-        },
-        lines_insertion = {
-            text = insertion,
-            line = end_line,
-        },
-    }
-end
-
----@private
----@param bufnr integer
----@param ns_id integer
----@param preview copilotlsp.nes.InlineEditPreview
-function M._display_preview(bufnr, ns_id, preview)
-    if preview.deletion then
-        local range = preview.deletion.range
-        local existing_line = vim.api.nvim_buf_get_lines(bufnr, range["end"].line, range["end"].line + 1, false)[1]
-            or ""
-        vim.api.nvim_buf_set_extmark(bufnr, ns_id, range.start.line, range.start.character, {
-            hl_group = "CopilotLspNesDelete",
-            end_row = range["end"].line,
-            end_col = math.min(range["end"].character, #existing_line),
-        })
-    end
-
-    local inline_insertion = preview.inline_insertion
-    if inline_insertion then
-        local virt_lines =
-            require("copilot-lsp.util").hl_text_to_virt_lines(inline_insertion.text, vim.bo[bufnr].filetype)
-        vim.api.nvim_buf_set_extmark(bufnr, ns_id, inline_insertion.line, inline_insertion.character, {
-            virt_text = virt_lines[1],
-            virt_text_pos = "inline",
-        })
-    end
-
-    local lines_insertion = preview.lines_insertion
-    if lines_insertion then
-        local virt_lines =
-            require("copilot-lsp.util").hl_text_to_virt_lines(lines_insertion.text, vim.bo[bufnr].filetype)
-        local total_lines = vim.api.nvim_buf_line_count(bufnr)
-        if lines_insertion.line >= total_lines then
-            lines_insertion.line = math.max(total_lines - 1, 0)
-        end
-        vim.api.nvim_buf_set_extmark(bufnr, ns_id, lines_insertion.line, 0, {
-            virt_lines = virt_lines,
-            virt_lines_above = lines_insertion.above,
-            strict = false,
-        })
-    end
-end
-
----@private
----@param bufnr integer
 ---@param ns_id integer
 ---@param edits copilotlsp.InlineEdit[]
 ---@return boolean
@@ -190,6 +45,16 @@ function M._display_next_suggestion(bufnr, ns_id, edits)
     local extmarks = require("copilot-lsp.nes.diff").compute(bufnr, suggestion, vim.bo[bufnr].filetype)
     for _, ext in ipairs(extmarks) do
         vim.api.nvim_buf_set_extmark(bufnr, ns_id, ext.line, ext.col, ext.opts)
+    end
+
+    -- Right-aligned indicator on the suggestion's start line
+    local cfg = require("copilot-lsp.config").config
+    if cfg.nes.indicator.enabled then
+        local start_line = suggestion.range and suggestion.range.start.line or 0
+        vim.api.nvim_buf_set_extmark(bufnr, ns_id, start_line, 0, {
+            virt_text = { { cfg.nes.indicator.text, cfg.nes.indicator.hl } },
+            virt_text_pos = "right_align",
+        })
     end
 
     vim.b[bufnr].nes_state = suggestion
