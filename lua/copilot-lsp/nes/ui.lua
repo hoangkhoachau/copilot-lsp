@@ -47,17 +47,7 @@ function M._display_next_suggestion(bufnr, ns_id, edits)
         vim.api.nvim_buf_set_extmark(bufnr, ns_id, ext.line, ext.col, ext.opts)
     end
 
-    -- Right-aligned indicator on the suggestion's start line
-    local cfg = require("copilot-lsp.config").config
-    if cfg.nes.indicator.enabled then
-        local start_line = suggestion.range and suggestion.range.start.line or 0
-        vim.api.nvim_buf_set_extmark(bufnr, ns_id, start_line, 0, {
-            virt_text = { { cfg.nes.indicator.text, cfg.nes.indicator.hl } },
-            virt_text_pos = "right_align",
-        })
-    end
-
-    vim.b[bufnr].nes_state = suggestion
+vim.b[bufnr].nes_state = suggestion
     vim.b[bufnr].copilotlsp_nes_namespace_id = ns_id
 
     return true
