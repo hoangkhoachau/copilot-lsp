@@ -83,7 +83,6 @@ function M.request_nes(copilot_lss)
     local tick = vim.b[bufnr].changedtick
     if M._last_changedtick[bufnr] == tick then return end
     M._last_changedtick[bufnr] = tick
-    vim.notify("[nes] requesting tick=" .. tostring(tick), vim.log.levels.DEBUG)
     if type(copilot_lss) == "string" then
         copilot_lss = vim.lsp.get_clients({ name = copilot_lss })[1]
     end
