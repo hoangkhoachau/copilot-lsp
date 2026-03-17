@@ -12,7 +12,7 @@ M.defaults = {
     nes = {
         debounce = 100,
         trigger = {
-            events = { "ModeChanged i:n", "TextChanged", "User CopilotLspNesDone" },
+            events = { "ModeChanged i:n", "TextChanged" },
         },
         clear = {
             events = { "TextChangedI", "InsertEnter" },

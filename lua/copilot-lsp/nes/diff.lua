@@ -192,6 +192,22 @@ function M.compute(bufnr, edit, filetype)
 
     local old_lines = vim.api.nvim_buf_get_lines(bufnr, start_line, end_line + 1, false)
     local new_lines = vim.split(new_text, "\n", { plain = true })
+    local start_line_text = vim.api.nvim_buf_get_lines(bufnr, start_line, start_line + 1, false)[1] or ""
+    local start_byte_col = vim.str_byteindex(start_line_text, "utf-16", start_char, false)
+
+    -- Same-line insertion should stay inline, especially at end-of-line.
+    if start_line == end_line and start_char == end_char and #new_lines == 1 and new_text ~= "" then
+        return {
+            {
+                line = start_line,
+                col = start_byte_col,
+                opts = {
+                    virt_text = { { new_text, "CopilotLspNesAdd" } },
+                    virt_text_pos = "inline",
+                },
+            },
+        }
+    end
 
     -- Apply character-level boundaries to get the actual old/new text segments
     -- old_text is the exact characters being replaced
