@@ -63,8 +63,6 @@ local function capture_snapshot(bufnr)
     local params = vim.lsp.util.make_position_params(0, "utf-16")
     ---@diagnostic disable-next-line: inject-field
     params.textDocument.version = version
-    params.context = { triggerKind = 2 }
-
     local snapshot = {
         bufnr = bufnr,
         mode = vim.api.nvim_get_mode().mode,
@@ -78,6 +76,21 @@ local function capture_snapshot(bufnr)
     }
     snapshot.fingerprint = snapshot_fingerprint(snapshot)
     return snapshot
+end
+
+local function notify_dismiss(candidate, command_name)
+    if not candidate or not candidate.shown then
+        return
+    end
+    local client = vim.lsp.get_client_by_id(candidate.client_id)
+    if not client or not candidate.edit or not candidate.edit.command then
+        return
+    end
+    client:exec_cmd({
+        title = "",
+        command = command_name,
+        arguments = candidate.edit.command.arguments,
+    }, { bufnr = candidate.snapshot.bufnr })
 end
 
 local function dismiss_view(bufnr)
@@ -178,6 +191,7 @@ local function flush_pending(client)
 
     local candidate = M._candidates[snapshot.bufnr]
     if candidate and candidate.snapshot and candidate.snapshot.fingerprint ~= snapshot.fingerprint then
+        notify_dismiss(candidate, "github.copilot.didIgnoreNextEditSuggestionItem")
         invalidate_candidate(snapshot.bufnr)
     end
 
@@ -475,6 +489,8 @@ function M.walk_cursor_start_edit(bufnr)
             return
         end
         vim.api.nvim_win_set_cursor(0, { start_line + 1, start_byte_col })
+        -- Re-render after jump so the full diff replaces the hint
+        render_candidate(bufnr)
     end)
     return true
 end
@@ -549,6 +565,7 @@ end
 function M.clear(bufnr)
     bufnr = bufnr and bufnr > 0 and bufnr or vim.api.nvim_get_current_buf()
     local had_candidate = M._candidates[bufnr] ~= nil or vim.b[bufnr].nes_state ~= nil
+    notify_dismiss(M._candidates[bufnr], "github.copilot.didRejectNextEditSuggestionItem")
     invalidate_candidate(bufnr)
     return had_candidate
 end

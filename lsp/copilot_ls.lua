@@ -22,6 +22,18 @@ return {
         nextEditSuggestions = {
             enabled = true,
         },
+        advanced = {
+            contextProviders = { "*" },
+            contextProviderTimeBudget = 500,
+        },
+        internal = {
+            useChatLibCompletions = true,
+            useSplitContextPrompt = true,
+            useXTab = true,
+            nesUseExplicitRejection = true,
+            useWorkspaceContextCoordinator = true,
+            includeNeighboringFiles = true,
+        },
     },
     handlers = require("copilot-lsp.handlers"),
     root_dir = vim.uv.cwd(),

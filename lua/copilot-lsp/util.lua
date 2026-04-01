@@ -217,6 +217,7 @@ function M.set_hl()
     vim.api.nvim_set_hl(0, "CopilotLspNesDelete", { link = "DiffDelete", default = true })
     vim.api.nvim_set_hl(0, "CopilotLspNesApply", { link = "DiffText", default = true })
     vim.api.nvim_set_hl(0, "CopilotLspNesContext", { link = "DiffChange", default = true })
+    vim.api.nvim_set_hl(0, "CopilotLspNesHint", { link = "DiagnosticHint", default = true })
 end
 
 --- UTF-8 aware word splitting. Splits on whitespace and punctuation boundaries.
