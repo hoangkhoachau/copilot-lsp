@@ -2,20 +2,29 @@
 
 ## Features
 
-### Done
+A Neovim plugin that implements the [Copilot Language Server Protocol](https://github.com/github/copilot-language-server-release).
 
-- TextDocument Focusing
+### Implemented LSP Features
 
-### In Progress
-
-- Inline Completion
-- Next Edit Suggestion
-- Uses native LSP Binary
-
-### To Do
-
-- [x] Sign In Flow
-- Status Notification
+| Feature | Method | Status |
+|---------|--------|--------|
+| Initialization | `initialize` / `initialized` | ✅ (Neovim built-in) |
+| Configuration | `workspace/didChangeConfiguration` | ✅ (Neovim built-in) |
+| Workspace Folders | `workspace/didChangeWorkspaceFolders` | ✅ (Neovim built-in) |
+| Text Document Sync | `textDocument/didOpen/didChange/didClose` | ✅ (Neovim built-in) |
+| Text Document Focusing | `textDocument/didFocus` | ✅ |
+| Status Notification | `didChangeStatus` | ✅ |
+| Sign In | `signIn` | ✅ |
+| Sign Out | `signOut` | ✅ |
+| Inline Completions | `textDocument/inlineCompletion` | ✅ (via blink-cmp) |
+| Show Completion Telemetry | `textDocument/didShowCompletion` | ✅ |
+| Partial Accept Telemetry | `textDocument/didPartiallyAcceptCompletion` | ✅ |
+| Next Edit Suggestions | `textDocument/copilotInlineEdit` | ✅ |
+| Show Inline Edit Telemetry | `textDocument/didShowInlineEdit` | ✅ |
+| Panel Completions | `textDocument/copilotPanelCompletion` | ✅ |
+| Cancellation | `$/cancelRequest` | ✅ (Neovim built-in) |
+| Logs | `window/logMessage` | ✅ (Neovim built-in) |
+| Messages | `window/showMessageRequest` | ✅ (Neovim built-in) |
 
 ## Usage
 
@@ -59,6 +68,54 @@ vim.keymap.set("n", "<esc>", function()
         -- fallback to other functionality
     end
 end, { desc = "Clear Copilot suggestion or fallback" })
+```
+
+#### Sign Out
+
+```lua
+-- Sign out of GitHub Copilot
+vim.keymap.set("n", "<leader>co", function()
+    require("copilot-lsp").sign_out()
+end, { desc = "Copilot sign out" })
+```
+
+#### Panel Completions ("Open Copilot")
+
+Open a vertical split showing multiple completion suggestions for the current
+cursor position:
+
+```lua
+vim.keymap.set("n", "<leader>cp", function()
+    local client = vim.lsp.get_clients({ name = "copilot_ls" })[1]
+    require("copilot-lsp.panel").request_panel_completion(client)
+end, { desc = "Open Copilot panel completions" })
+```
+
+A custom callback can be supplied to handle the results yourself:
+
+```lua
+require("copilot-lsp.panel").request_panel_completion(client, function(err, result, _ctx)
+    if err or not result then return end
+    for _, item in ipairs(result.items) do
+        print(item.insertText)
+    end
+end)
+```
+
+#### Inline Completion Telemetry
+
+When a completion plugin (e.g. blink-cmp) displays or partially accepts an
+inline completion, notify the server for telemetry:
+
+```lua
+local completion = require("copilot-lsp.completion")
+local client = vim.lsp.get_clients({ name = "copilot_ls" })[1]
+
+-- Call after a suggestion becomes visible
+completion.did_show_completion(client, item)
+
+-- Call after the user accepts only part of the suggestion
+completion.did_partially_accept_completion(client, item, accepted_length)
 ```
 
 ## Default Configuration

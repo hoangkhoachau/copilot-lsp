@@ -39,4 +39,26 @@ function M.request_inline_completion(type)
     })
     vim.lsp.buf_request_all(0, "textDocument/inlineCompletion", params, handle_inlineCompletion_response)
 end
+
+--- Notify the language server that a completion item was displayed to the user.
+--- This should be called whenever a completion suggestion becomes visible.
+---@param client vim.lsp.Client
+---@param item lsp.InlineCompletionItem
+function M.did_show_completion(client, item)
+    client:notify("textDocument/didShowCompletion", { item = item })
+end
+
+--- Notify the language server that the user partially accepted a completion.
+--- `accepted_length` is the number of UTF-16 codepoints accepted, measured
+--- from the start of `insertText` to the end of the accepted portion.
+---@param client vim.lsp.Client
+---@param item lsp.InlineCompletionItem
+---@param accepted_length integer
+function M.did_partially_accept_completion(client, item, accepted_length)
+    client:notify("textDocument/didPartiallyAcceptCompletion", {
+        item = item,
+        acceptedLength = accepted_length,
+    })
+end
+
 return M

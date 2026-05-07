@@ -3,6 +3,7 @@ local M = {}
 
 local methods = {
     signIn = "signIn",
+    signOut = "signOut",
     didChangeStatus = "didChangeStatus",
 }
 
@@ -120,6 +121,32 @@ M["didChangeStatus"] = function(err, res, ctx)
     if res.kind == "Error" and res.message:find("not signed into") then
         sign_in(ctx.client_id, ctx.bufnr)
     end
+end
+
+---@param _err lsp.ResponseError?
+M[methods.signOut] = function(_err, _res, _ctx)
+    if _err then
+        vim.notify("[copilot-lsp] failed to sign out: " .. vim.inspect(_err), vim.log.levels.ERROR)
+        return
+    end
+    vim.notify("[copilot-lsp] signed out of GitHub Copilot", vim.log.levels.INFO)
+end
+
+--- Signs out of GitHub Copilot.
+---@param client_id? integer LSP client ID; if nil, the first active copilot_ls client is used
+---@param bufnr? integer Buffer number for context (defaults to 0)
+function M.sign_out(client_id, bufnr)
+    local client
+    if client_id then
+        client = vim.lsp.get_client_by_id(client_id)
+    else
+        client = vim.lsp.get_clients({ name = "copilot_ls" })[1]
+    end
+    if not client then
+        vim.notify("[copilot-lsp] no active copilot client", vim.log.levels.WARN)
+        return
+    end
+    client:request(methods.signOut, vim.empty_dict(), nil, bufnr or 0)
 end
 
 return M
